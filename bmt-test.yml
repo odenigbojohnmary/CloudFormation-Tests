@@ -1,0 +1,1852 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description:  This template deploys an AutoScaling Group with Application Load Balancer that Scales with Traffic (Web Servers), AutoScaling Group that Scales with Amazon Queue System (Worker Servers), An SFTP Server with a Network LoadBalancer, An Amazon Columnar DataBase(Redshift Server)  with a VPC, with public and private subnets in 2 AZs. It deploys an internet gateway, with a default
+  route on the public subnets. It deploys 2 NAT gateways (one in each AZ),
+  and default routes for them in the private subnets. It deploys the Web server and the SFTP server across the public subnet, deploy the Worker Server and the Database across the Private Subnet. 
+  It also deploys Security Group for each Component which is uses to restrict access the component.
+  It also deploys Monitoring and cloud watch matrics with Alarms for proper monitoring.
+
+Mappings:
+  RegionMap:
+    us-east-1:
+     "AMI": "ami-087c17d1fe0178315"
+    us-east-2:
+      "AMI": "ami-00dfe2c7ce89a450b"
+    us-west-1:
+     "AMI": "ami-011996ff98de391d1"
+    us-west-2:
+      "AMI": "ami-0c2d06d50ce30b442"
+    eu-west-1:
+      "AMI": "ami-0d1bf5b68307103c2"
+    eu-west-2:
+      "AMI": "ami-0dbec48abfe298cab"
+    eu-west-3:
+      "AMI":  "ami-072056ff9d3689e7b"
+    ap-northeast-1:
+      "AMI": "ami-0c3fd0f5d33134a76"
+    ap-northeast-2:
+      "AMI": "ami-095ca789e0549777d"
+    ap-northeast-3:
+      "AMI": "ami-0ee933a7f81beb045"
+    ap-south-1:
+      "AMI": "ami-0d2692b6acea72ee6"
+    ap-southeast-1:
+      "AMI": "ami-01f7527546b557442"
+    ap-southeast-2:
+      "AMI": "ami-0dc96254d5535925f"
+    ca-central-1:
+      "AMI": "ami-0d4ae09ec9361d8ac"
+    eu-central-1:
+      "AMI": "ami-0cc293023f983ed53"
+
+Metadata:
+  Author:
+    Description: Odenigbo Johnmary <Odenigbojohnmary@gmail.com>
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+
+#VPC RESOURCE PARAMETERS
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.10.0.0/16
+
+  PublicSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.10.10.0/24
+
+  PublicSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+    Type: String
+    Default: 10.10.11.0/24
+
+  PrivateSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.10.1.0/24
+
+  PrivateSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+    Type: String
+    Default: 10.10.2.0/24
+
+#WEBSERVER AND WORKER SERVER COMBINED RESOURCE PARAMETERS
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.nano
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+      - m1.small
+      - m1.medium
+      - m1.large
+      - m1.xlarge
+      - m2.xlarge
+      - m2.2xlarge
+      - m2.4xlarge
+      - m3.medium
+      - m3.large
+      - m3.xlarge
+      - m3.2xlarge
+      - m4.large
+      - m4.xlarge
+      - m4.2xlarge
+      - m4.4xlarge
+      - m4.10xlarge
+      - c1.medium
+      - c1.xlarge
+      - c3.large
+      - c3.xlarge
+      - c3.2xlarge
+      - c3.4xlarge
+      - c3.8xlarge
+      - c4.large
+      - c4.xlarge
+      - c4.2xlarge
+      - c4.4xlarge
+      - c4.8xlarge
+      - g2.2xlarge
+      - g2.8xlarge
+      - r3.large
+      - r3.xlarge
+      - r3.2xlarge
+      - r3.4xlarge
+      - r3.8xlarge
+      - i2.xlarge
+      - i2.2xlarge
+      - i2.4xlarge
+      - i2.8xlarge
+      - d2.xlarge
+      - d2.2xlarge
+      - d2.4xlarge
+      - d2.8xlarge
+      - hi1.4xlarge
+      - hs1.8xlarge
+      - cr1.8xlarge
+      - cc2.8xlarge
+      - cg1.4xlarge
+    ConstraintDescription: must be a valid EC2 instance type.
+
+  KeyName:
+    Description: The EC2 Key Pair to allow SSH access to the instances
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
+  OperatorEMail:
+    Description: Email address to notify if there are any scaling operations
+    Type: String
+    Default: odenigbojohnmary@gmail.com
+    AllowedPattern: "([a-zA-Z0-9_\\-\\.]+)@((\\[[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.)|(([a-zA-Z0-9\\-]+\\.)+))([a-zA-Z]{2,4}|[0-9]{1,3})(\\]?)"
+    ConstraintDescription: must be a valid email address
+
+#WEBSERVER RESOURCE PARAMETERS SECTION
+  WebServerASGMax:
+    Description: Maximum Instances in ASG for the WebServer
+    Type: Number
+    Default: 5
+  
+  WebServerASGMin:
+    Description: Minimum Instances in ASG the WebServer
+    Type: Number
+    Default: 1
+
+# SFTP SERVER RESOURCE PARAMETERS
+  ELBType:
+    Type: String
+    Default: network
+
+  # SftpBucketName:
+  #   Description: The Name of the SFTP Bucket to be created
+  #   Type: String
+  #   Default: sftp-bucket
+
+#WORKER SERVER RESOURCE PARAMETERS
+  desiredCapacity:
+    Default: 2
+    Description: Desired capacity
+    Type: Number
+  maxSize:
+    Default: 12
+    Description: Maximum capacity
+    Type: Number
+  minSize:
+    Default: 2
+    Description: Mininum capacity
+    Type: Number
+
+# MONITORING PARAMETERS
+  volume:
+    Description: "Provide disk's/folder's name (ex.: xvda1)"
+    Type: "String"
+    Default: "xvda1"
+
+  path:
+    Description: "Provide path"
+    Type: "String"
+    Default: "/"
+
+  fstype:
+    Description: "Choose fstype - ext4 or xfs -> Ubuntu and AmazonLinux use ext4, CentOS use xfs"
+    Type: String
+    AllowedValues:
+      - ext4
+      - xfs
+      - btrfs
+    ConstraintDescription: You must specify ext4,xfs,or btrfs.
+
+
+# RESDSHIFT COLUMNAR DATABASE PARAMATER
+  DatabaseName:
+    Description: The name of the first database to be created when the redshift cluster is created,
+    Type: String
+    Default: defaultdb
+
+  ClusterType: 
+    Description: The type of the cluster
+    Type: String
+    Default: "single-node"
+    AllowedValues: 
+      - single-node
+      - multi-node
+    ConstraintDescription : must be single-node or multi-node.
+
+  NumberOfNodes: 
+    Description: The number of compute nodes in the redshift cluster.  When cluster type is specified as single-node the NumberOfNodes parameter should be specified as 1, 2 multi-node, the NumberOfNodes parameter should be greater than 1
+    Type: Number
+    Default: 1
+
+  NodeType: 
+    Description: The node type to be provisioned for the redshift cluster
+    Type: String
+    Default: "dc1.large"
+    AllowedValues : ["dw1.xlarge", "dw1.8xlarge", "dw2.large", "dw2.8xlarge", "dc1.large", "dc1.8xlarge", "ds1.xlarge", "ds1.8xlarge", "ds2.xlarge", "ds2.8xlarge" ]
+    ConstraintDescription : must be a valid RedShift node type.
+
+  MasterUsername:
+    Description: The user name associated with the master user account for the redshift cluster that is being created
+    Type: String
+    Default: redispoc
+
+  MasterUserPassword:
+    Description: The password associated with the master user account for the redshift cluster that is being created.
+    Type: String
+    Default: testServer1234
+
+  DatabasePort: 
+    Description: The port that Redshift will listen on and that will be allowed through the Security Group.
+    Type: String
+    Default: 5439
+  
+  DatabaseInboundTraffic:
+    Description: Allow inbound traffic to the cluster from this VPC CIDR range.
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.10.0.0/16
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: must be a valid CIDR range of the form x.x.x.x/x.
+  
+  Maintenancewindow:
+    Description: Maintenance Window for Redshift Cluster
+    Type: String
+    Default: 'sat:05:00-sat:05:30'
+        
+  MaxConcurrentCluster:
+    Description: The maximum number of concurrency scaling Redshift clusters.
+    Type: String
+    Default: '1'
+    
+  EncryptionAtRest:
+    Description: Enables or disables encryption at rest of the Redshift database.
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - true
+      - false
+    ConstraintDescription: must be true or false.
+  
+  kmskey:
+    Description: The existing KMS key ID for encrypting Redshift database at-rest.
+    Type: String
+    Default: ''
+
+  EnableLoggingToS3:
+    Default: 'false'
+    Type: String
+    AllowedValues:
+      - true
+      - false
+    Description: Enables or disables logging to an S3 bucket.  To enable logging, select True.
+    
+  S3BucketForRedshiftIAMRole:
+    Type: String
+    Description: The existing Amazon S3 bucket. An IAM role will be created and associated to the Redshift cluster with GET and LIST access to this bucket.
+    Default: ''
+    
+  GlueCatalogDatabase:
+    Type: String
+    Description: The name of your Glue Data Catalog database.
+    AllowedPattern: '([ \t\n\x0B\f\r])*|([a-z])([\-]|[a-z]|[\-]|[0-9])*'
+    ConstraintDescription: must start with a-z and contain only a-z or 0-9 or hyphen (-).
+  
+Conditions:
+  RedshiftSingleNodeClusterCondition:
+    Fn::Equals:
+    - Ref: NumberOfNodes
+    - '1'
+
+  IsEncryptionAtRest: 
+    Fn::Equals:
+    - Ref: EncryptionAtRest 
+    - 'true'
+
+  IsEnableLoggingToS3: 
+    Fn::Equals: 
+    - Ref: EnableLoggingToS3 
+    - 'true'
+     
+  IsConfigureRedshiftIAMRole: 
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: S3BucketForRedshiftIAMRole
+      
+  IsGlueCatalogName:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: GlueCatalogDatabase
+
+Resources:
+
+#VPC RESOURCES SECTION
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn:
+    - VPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    DependsOn:
+    - VPC
+    - InternetGateway
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    DependsOn:
+    - InternetGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Subnet (AZ1)
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    DependsOn:
+    - InternetGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs  '' ]
+      CidrBlock: !Ref PublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Subnet (AZ2)
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Subnet (AZ1)
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs  '' ]
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Subnet (AZ2)
+
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: 
+      - InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: 
+    - InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet2
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    DependsOn:
+    - VPC
+    - InternetGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Routes
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: 
+    - InternetGatewayAttachment
+    - PublicRouteTable
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes (AZ1)
+
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes (AZ2)
+
+  DefaultPrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  NoIngressSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "no-ingress-sg"
+      GroupDescription: "Security group with no ingress rule"
+      VpcId: !Ref VPC
+  
+#SECURITY GROUP RESOURCES SECTION
+  SSHSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable SSH on port 1220 from only Internal IPs
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '1220'
+          ToPort: '1220'
+          CidrIp: !Ref VpcCIDR
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} SSH-SG
+
+  WebServerELBSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable HTTP  and HTTPS from 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} WebServerELB-SG
+  
+  WebServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable HTTP from 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '1220'
+          ToPort: '1220'
+          CidrIp: !Ref VpcCIDR
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          SourceSecurityGroupId: !Select
+            - 0
+            - !GetAtt
+              - ApplicationLoadBalancer
+              - SecurityGroups
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          SourceSecurityGroupId: !Select
+            - 0
+            - !GetAtt
+              - ApplicationLoadBalancer
+              - SecurityGroups
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} WebServer-SG
+  
+  SftpSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Sftp  Endpoint Security Group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref VpcCIDR
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} SFTP-SG
+  
+  RedshiftSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Redshift Database Security group
+      SecurityGroupIngress:
+      - CidrIp:
+          Ref: DatabaseInboundTraffic
+        FromPort:
+          Ref: DatabasePort
+        ToPort:
+          Ref: DatabasePort
+        IpProtocol: tcp
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}  RedshiftCluster-SG
+
+#WEBSERVER RESOURCES SECTION
+  WebServerGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      AvailabilityZones:
+        - !Select [ 0, !GetAZs '' ]
+        - !Select [ 1, !GetAZs '' ]
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      DesiredCapacity: 1
+      HealthCheckGracePeriod: 300
+      HealthCheckType: ELB
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebServerLaunchTemplate
+        Version: !GetAtt WebServerLaunchTemplate.LatestVersionNumber
+      MaxSize: !Ref WebServerASGMax
+      MinSize: !Ref WebServerASGMin
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+      Tags:
+        - Key: Name
+          PropagateAtLaunch: false
+          Value: !Sub ${EnvironmentName} WebServer-ASG
+
+  WebServerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn: 
+    - WebServerInstanceProfile
+    Properties:
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn:
+            Fn::GetAtt:
+            - WebServerInstanceProfile
+            - Arn
+        ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]
+        InstanceType: 
+          Ref: InstanceType
+        KeyName: 
+          Ref: KeyName
+        SecurityGroupIds:
+         - Ref: WebServerSecurityGroup
+         - Ref: SSHSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update
+            mkdir tempcloudwatch
+            cd tempcloudwatch
+            yum install wget -y
+            yum install unzip -y
+            wget https://s3.amazonaws.com/amazoncloudwatch-agent/linux/amd64/latest/AmazonCloudWatchAgent.zip
+            unzip AmazonCloudWatchAgent.zip
+            sudo ./install.sh
+            wget https://github.com/odenigbojohnmary/cloudwatch-agent-metrics.git
+            cd cloudwatch-agent-metrics
+            sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:config.json -s
+            yum install httpd -y
+            service httpd start
+            echo "<html><body><h1>Hello from Region ${AWS::Region}<h1></body></html>" > /var/www/html/index.html
+
+  WebServerTargetPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref WebServerGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 80.0
+
+  ApplicationLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      SecurityGroups:
+        - !Ref WebServerELBSecurityGroup
+      Subnets:
+       - !Ref PublicSubnet1
+       - !Ref PublicSubnet2
+
+  ALBListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+
+  ALBTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref VPC
+
+  WebServerInstanceRole:
+    Type: AWS::IAM::Role
+    DependsOn:
+    - SqsQueue
+    - WorkerS3Bucket
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+        Version: 2012-10-17
+
+  CloudWatchAgentServerPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: CloudWatchAgentServerPolicy
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'cloudwatch:PutMetricData'
+              - 'ec2:DescribeVolumes'
+              - 'ec2:DescribeTags'
+              - 'logs:PutLogEvents'
+              - 'logs:DescribeLogStreams'                
+              - 'logs:DescribeLogGroups'
+              - 'logs:CreateLogStream'
+              - 'logs:CreateLogGroup'
+            Resource: '*'
+      Roles:
+        - !Ref WebServerInstanceRole
+  
+  WebServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    DependsOn:
+    - WebServerInstanceRole
+    Properties:
+      Path: /
+      Roles:
+      - Ref: WebServerInstanceRole
+
+#NOTIFICATION RESOURCE SECTION
+  SftpS3SnsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName:  SftpS3SnsTopic
+      Subscription:  
+        - Endpoint: !Ref OperatorEMail
+          Protocol: "email"
+
+  MonitoringSnsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName:  MonitoringSnsTopic
+      Subscription:  
+        - Endpoint: !Ref OperatorEMail
+          Protocol: "email"
+  
+#SFTP RESOURCES SECTION
+  ElasticIP1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: VPC
+  
+  ElasticIP2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: VPC
+
+  SftpServer:
+    Type: AWS::Transfer::Server
+    Properties:
+      EndpointDetails:
+        AddressAllocationIds:
+          - !GetAtt ElasticIP1.AllocationId
+          - !GetAtt ElasticIP2.AllocationId
+        SubnetIds:
+          - Ref: PublicSubnet1
+          - Ref: PublicSubnet2
+        SecurityGroupIds:
+          - Ref: SftpSecurityGroup
+          - Ref: SSHSecurityGroup
+        VpcId: !Ref VPC
+      EndpointType: VPC
+      IdentityProviderType: SERVICE_MANAGED
+      LoggingRole: !GetAtt SftpLogRole.Arn
+      Protocols:
+        - SFTP
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} SftpServer
+  
+  SftpUser:
+    Type: AWS::Transfer::User
+    Properties:
+      UserName: sftpuser
+      HomeDirectory: !Sub /mysftp-${AWS::AccountId}${AWS::Region}/root
+      Role: !GetAtt SftpAccessRole.Arn
+      ServerId: !GetAtt SftpServer.ServerId
+  
+  SftpLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+      - Key: load_balancing.cross_zone.enabled
+        Value: 'true'
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      Type: !Ref ELBType
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} SFTP NLB
+                 
+  SftpTargetGroup :
+    Type : AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: SftpServer
+    Properties :
+      Name: SSH-for-SFTP-Server
+      Port: 22
+      Protocol: TCP
+      TargetGroupAttributes: 
+        - Key: deregistration_delay.timeout_seconds
+          Value: '20'
+      UnhealthyThresholdCount: 2
+      HealthyThresholdCount: 2
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} SFTP TG
+
+  SftpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn:
+      - SftpServer
+      - SftpTargetGroup
+    Properties:
+      DefaultActions: 
+        - Type: forward
+          TargetGroupArn: !Ref SftpTargetGroup 
+      LoadBalancerArn: !Ref SftpLoadBalancer 
+      Port: 22
+      Protocol: TCP 
+
+  SftpNLBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'SSH and Port 80'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 220
+          ToPort: 220
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} SFTP-NLB-SG
+
+  SftpAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub SftpAccessPolicy-${AWS::Region}
+      Description: Sftp access policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - 's3:PutObject'
+              - 's3:GetObject'
+              - 's3:DeleteObject'
+              - 's3:GetObjectVersion'
+              - 's3:DeleteObjectVersion'
+            Resource: !Sub arn:aws:s3:::mysftp-${AWS::AccountId}${AWS::Region}/*
+          - Effect: Allow
+            Action:
+                - kms:Encrypt
+                - kms:Decrypt
+                - kms:ReEncrypt*
+                - kms:GenerateDataKey
+                - kms:DescribeKey
+            Resource: "*"
+          -
+            Effect: Allow
+            Action:
+              - 's3:ListBucket'
+              - 's3:GetBucketLocation'
+            Resource: !Sub arn:aws:s3:::mysftp-${AWS::AccountId}${AWS::Region}
+            Condition:
+              StringLike:
+                's3:prefix': 'root/*'
+
+  SftpS3SnsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Id: SftpS3SnsTopicPolicy
+        Version: '2012-10-17'
+        Statement:
+        - Sid: SftpS3SnsTopicPolicy
+          Effect: Allow
+          Principal:
+            AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+          Action: sns:Subscribe
+          Resource: !Ref SftpS3SnsTopic
+        - Sid: S3 Policy
+          Effect: Allow
+          Principal:
+            Service: s3.amazonaws.com
+          Action: sns:Publish
+          Resource: !Ref SftpS3SnsTopic
+          Condition:
+            ArnLike:
+              aws:SourceArn: !Sub arn:aws:s3:::mysftp-${AWS::AccountId}${AWS::Region}
+      Topics:
+      - !Ref SftpS3SnsTopic
+
+  SftpAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'transfer.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - Ref: SftpAccessPolicy
+
+  SftpLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/transfer/SftpServer
+      RetentionInDays: 90
+
+  SftpLogPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub SftpLogPolicy-${AWS::Region}
+      Description: Sftp Log access policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Action:
+                - "logs:CreateLogGroup"
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+                - "logs:DescribeLogStreams"
+            Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/transfer/*:*
+
+  SftpLogRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'transfer.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - Ref: SftpLogPolicy
+
+  S3SFTPKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Key for S3 Encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Id: key-default-1
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::Join:
+                - ''
+                - - 'arn:aws:iam::'
+                  - Ref: AWS::AccountId
+                  - :root
+            Action: kms:*
+            Resource: '*'
+  
+  S3SFTPKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: "alias/S3SFTPKey"
+      TargetKeyId: !Ref S3SFTPKey
+  
+# QUEUE RESOURCE SECTION
+  SqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 900
+
+  SqsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    DependsOn:
+    - SqsQueue
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action:
+          - sqs:SendMessage
+          Effect: Allow
+          Principal:
+            Service: s3.amazonaws.com
+          Resource: '*'
+        Version: 2012-10-17
+      Queues:
+      - Ref: SqsQueue
+  
+#S3 BUCKET SECTION FOR STORAGE AND USE FOR QUEUE SYSTEM AND SFTP SERVER
+  WorkerS3Bucket:
+    Type: AWS::S3::Bucket
+    DependsOn:
+    - SqsQueue
+    - SqsQueuePolicy
+    Properties:
+      NotificationConfiguration:
+        QueueConfigurations:
+        - Event: s3:ObjectCreated:*
+          Queue:
+            Fn::GetAtt:
+            - SqsQueue
+            - Arn
+  
+  SFTPBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: 
+    - SftpS3SnsTopicPolicy
+    Properties:
+      BucketName: !Sub mysftp-${AWS::AccountId}${AWS::Region}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt S3SFTPKey.Arn
+      PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+      NotificationConfiguration:
+        TopicConfigurations:
+            - Event: 's3:ObjectCreated:*'
+              Filter:
+                S3Key:
+                    Rules:
+                      - Name: "prefix"
+                        Value: "root/"
+              Topic: 
+                Ref: SftpS3SnsTopic
+
+  RedshiftLoggingS3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Condition: IsEnableLoggingToS3
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+        - Id: RedshiftLogsArchivingToGlacier
+          Status: Enabled
+          ExpirationInDays: '30'
+          Transitions:
+            - TransitionInDays: '14'
+              StorageClass: Glacier
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Redshift-Cluster-LoggingBucket
+
+
+# WORKER SERVER WITH ASG THAT SCALES WITH QUEUE JOBS
+  WorkerServerAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn:
+    - WorkerServerLaunchTemplate
+    - PrivateSubnet1
+    - PrivateSubnet2
+    - AutoScalingServiceLinkedRole
+    Properties:
+      DesiredCapacity:
+        Ref: desiredCapacity
+      HealthCheckType: EC2
+      MaxSize:
+        Ref: maxSize
+      MinSize:
+        Ref: minSize
+      MixedInstancesPolicy:
+        InstancesDistribution:
+          OnDemandBaseCapacity: 0
+          OnDemandPercentageAboveBaseCapacity: 0
+          SpotAllocationStrategy: capacity-optimized
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId:
+              Ref: WorkerServerLaunchTemplate
+            Version: 1
+          Overrides:
+          - InstanceType: t3.large
+          - InstanceType: c4.large
+          - InstanceType: c5.large
+          - InstanceType: m4.large
+          - InstanceType: m5.large
+      VPCZoneIdentifier:
+      - Ref: PrivateSubnet1
+      - Ref: PrivateSubnet2
+
+  WorkerServerAutoScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    DependsOn:
+    - WorkerServerAutoScalingGroup
+    - SqsQueue
+    Properties:
+      AutoScalingGroupName:
+        Ref: WorkerServerAutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        CustomizedMetricSpecification:
+          Dimensions:
+          - Name: QueueName
+            Value:
+              Fn::GetAtt:
+              - SqsQueue
+              - QueueName
+          MetricName: ApproximateNumberOfMessagesVisible
+          Namespace: AWS/SQS
+          Statistic: Sum
+          Unit: Count
+        TargetValue: 2
+    
+  AutoScalingServiceLinkedRole:
+    Type: AWS::IAM::ServiceLinkedRole
+    Properties:
+      AWSServiceName: autoscaling.amazonaws.com
+      Description: Default Service-Linked Role enables access to AWS Services and Resources 
+        used or managed by Auto Scaling
+
+  CloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+    
+  Ec2FleetServiceLinkedRole:
+    Type: AWS::IAM::ServiceLinkedRole
+    Properties:
+      AWSServiceName: ec2fleet.amazonaws.com
+      Description: Default EC2 Fleet Service Linked Role
+
+  WorkerServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    DependsOn:
+    - WorkerServerInstanceRole
+    Properties:
+      Path: /
+      Roles:
+      - Ref: WorkerServerInstanceRole
+
+
+  WorkerServerInstanceRole:
+    Type: AWS::IAM::Role
+    DependsOn:
+    - SqsQueue
+    - WorkerS3Bucket
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+        Version: 2012-10-17
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+      Path: /
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action: sqs:*
+            Effect: Allow
+            Resource:
+              Fn::GetAtt:
+              - SqsQueue
+              - Arn
+          Version: 2012-10-17
+        PolicyName:
+          Fn::Join:
+          - '-'
+          - - Ref: EnvironmentName
+            - SqsQueuePolicy
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - logs:DescribeLogStreams
+            Effect: Allow
+            Resource: arn:aws:logs:*:*:*
+          Version: 2012-10-17
+        PolicyName:
+          Fn::Join:
+          - '-'
+          - - Ref: EnvironmentName
+            - cloudWatchLogsPolicy
+      - PolicyDocument:
+          Statement:
+          - Action: s3:ListBucket
+            Effect: Allow
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:s3:::'
+                - Ref: WorkerS3Bucket
+          Version: '2012-10-17'
+        PolicyName:
+          Fn::Join:
+          - '-'
+          - - Ref: EnvironmentName
+            - s3BucketListPolicy
+      - PolicyDocument:
+          Statement:
+          - Action: ec2:DescribeTags
+            Effect: Allow
+            Resource: '*'
+          Version: '2012-10-17'
+        PolicyName:
+          Fn::Join:
+          - '-'
+          - - Ref: EnvironmentName
+            - ec2DescribeTagsPolicy
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - s3:PutObject*
+            - s3:GetObject
+            - s3:DeleteObject
+            Effect: Allow
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:s3:::'
+                - Ref: WorkerS3Bucket
+                - /*
+          Version: '2012-10-17'
+        PolicyName:
+          Fn::Join:
+          - '-'
+          - - Ref: EnvironmentName
+            - s3BucketReadWritePolicy
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - autoscaling:SetInstanceProtection
+            - autoscaling:SetInstanceHealth
+            Effect: Allow
+            Resource: arn:aws:autoscaling:*:*:AutoScalingGroup:*:AutoScalingGroupName/*
+          Version: '2012-10-17'
+        PolicyName:
+          Fn::Join:
+          - '-'
+          - - Ref: EnvironmentName
+            - AutoScalingGroupPolicy
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - cloudwatch:PutMetricData
+            - ec2:DescribeVolumes
+            - ec2:DescribeTags
+            - logs:PutLogEvents
+            - logs:DescribeLogStreams                
+            - logs:DescribeLogGroups
+            - logs:CreateLogStream
+            - logs:CreateLogGroup
+            Effect: Allow
+            Resource: "*"
+          Version: 2012-10-17
+        PolicyName:
+          Fn::Join:
+          - '-'
+          - - Ref: EnvironmentName
+            - CloudWatchAgentServerPolicy
+      
+  
+  WorkerServerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn:
+    - WorkerServerInstanceProfile
+    - WorkerS3Bucket
+    - SqsQueue
+    - CloudWatchLogsGroup
+    Properties:
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn:
+            Fn::GetAtt:
+            - WorkerServerInstanceProfile
+            - Arn
+        ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]
+        SecurityGroupIds:
+          - Ref: SSHSecurityGroup
+        TagSpecifications:
+        - ResourceType: instance
+          Tags:
+          - Key: Name
+            Value: !Ref EnvironmentName
+        UserData:
+          Fn::Base64: !Sub |
+              #!/bin/bash -xe
+              yum update
+              yum -y install git
+              mkdir tempcloudwatch
+              cd tempcloudwatch
+              yum install wget -y
+              yum install unzip -y
+              wget https://s3.amazonaws.com/amazoncloudwatch-agent/linux/amd64/latest/AmazonCloudWatchAgent.zip
+              unzip AmazonCloudWatchAgent.zip
+              sudo ./install.sh
+              wget https://github.com/odenigbojohnmary/cloudwatch-agent-metrics.git
+              cd cloudwatch-agent-metrics
+              sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:config.json -s
+              cd /root && git clone https://github.com/awslabs/ec2-spot-labs.git
+              REGION=${AWS::Region} S3BUCKET=${WorkerS3Bucket} SQSQUEUE=${SqsQueue} CLOUDWATCHLOGSGROUP=${CloudWatchLogsGroup}
+              bash /root/ec2-spot-labs/sqs-ec2-spot-asg/user-data.sh
+
+# REDSHIFT DATABASE RESOURCES
+  RedshiftCluster:
+    Type: AWS::Redshift::Cluster
+    Properties:
+      ClusterType: !If [RedshiftSingleNodeClusterCondition, "single-node", "multi-node"]
+      NumberOfNodes: !If [RedshiftSingleNodeClusterCondition, !Ref "AWS::NoValue", !Ref NumberOfNodes]
+      KmsKeyId: !If [IsEncryptionAtRest, !Ref kmskey, !Ref "AWS::NoValue"]
+      Encrypted: 
+        Ref: EncryptionAtRest
+      Port: 
+        Ref: DatabasePort
+      NodeType: 
+        Ref: NodeType
+      DBName: 
+        Ref: DatabaseName 
+      MasterUsername: 
+        Ref: MasterUsername
+      MasterUserPassword: 
+        Ref: MasterUserPassword
+      ClusterParameterGroupName: 
+        Ref: RedshiftClusterParameterGroup
+      VpcSecurityGroupIds: 
+        - Ref: RedshiftSecurityGroup
+      ClusterSubnetGroupName: 
+        Ref: RedshiftClusterSubnetGroup
+      PubliclyAccessible: 'false'
+      LoggingProperties: !If 
+          - IsEnableLoggingToS3
+          - BucketName: !Ref RedshiftLoggingS3Bucket
+            S3KeyPrefix: 'AWSLogs'
+          - !Ref 'AWS::NoValue'
+      IamRoles:
+          - !If 
+              - IsConfigureRedshiftIAMRole
+              - !GetAtt MyRedshiftIAMRole.Arn
+              - !Ref 'AWS::NoValue'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}  RedshiftCluster
+
+  RedshiftClusterParameterGroup:
+    Type: AWS::Redshift::ClusterParameterGroup
+    Properties: 
+      Description: Redshift Cluster Parameter group
+      ParameterGroupFamily: redshift-1.0
+      Parameters:
+        - ParameterName: enable_user_activity_logging
+          ParameterValue: 'true'
+        - ParameterName: require_ssl
+          ParameterValue: 'true'
+        - ParameterName: auto_analyze
+          ParameterValue: 'true'
+        - ParameterName: statement_timeout
+          ParameterValue: '43200000'
+        - ParameterName: "wlm_json_configuration"
+          ParameterValue: "[{\"user_group\":[\"example_user_group1\"],\"query_group\":[\"example_query_group1\"],\"query_concurrency\":7},{\"query_concurrency\":5}]" 
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}  RedshiftCluster Parameter
+
+  RedshiftClusterSubnetGroup:
+    Type: AWS::Redshift::ClusterSubnetGroup
+    Properties:
+      Description: Cluster Subnet parameter group
+      SubnetIds: 
+        - Ref: PrivateSubnet2
+  
+  GlueCatalogDB:
+    Condition: IsGlueCatalogName
+    Type: 'AWS::Glue::Database'
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+          Name: !Ref GlueCatalogDatabase
+          Description: AWS Glue Catalog database from Stack
+
+  MyRedshiftIAMRole:
+    Type: AWS::IAM::Role
+    Condition: IsConfigureRedshiftIAMRole
+    Properties:
+      RoleName: !Join [ "-", [!Ref 'AWS::StackName', "RedshiftSpectrumRole"] ]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "redshift.amazonaws.com"
+                - "glue.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        -
+          PolicyName:  Spectrum-Glue-Access-Policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                    - s3:GetBucketLocation
+                    - s3:GetObject
+                    - s3:ListMultipartUploadParts
+                    - s3:ListBucket
+                    - s3:ListBucketMultipartUploads
+                Resource:
+                    - !Join ['', ["arn:aws:s3:::", !Ref S3BucketForRedshiftIAMRole]]
+                    - !Join ['', ["arn:aws:s3:::", !Ref S3BucketForRedshiftIAMRole, "/*"]]
+              -
+                Effect: Allow
+                Action:
+                    - glue:CreateDatabase
+                    - glue:DeleteDatabase
+                    - glue:GetDatabase
+                    - glue:GetDatabases
+                    - glue:UpdateDatabase
+                    - glue:CreateTable
+                    - glue:DeleteTable
+                    - glue:BatchDeleteTable
+                    - glue:UpdateTable
+                    - glue:GetTable
+                    - glue:GetTables
+                    - glue:BatchCreatePartition
+                    - glue:CreatePartition
+                    - glue:DeletePartition
+                    - glue:BatchDeletePartition
+                    - glue:UpdatePartition
+                    - glue:GetPartition
+                    - glue:GetPartitions
+                    - glue:BatchGetPartition
+                    - logs:*
+                Resource:
+                    - "*"
+
+# ALARM MONITORING RSEOURCES
+
+# WEBSERVER ALARMS
+  WebServerCPUAlarm: 
+    Type: AWS::CloudWatch::Alarm
+    DeletionPolicy: Retain
+    Properties:
+      AlarmDescription: !Sub "${WebServerGroup} has an instance with - High CPU Usage 80%"
+      AlarmActions:
+      - !Ref MonitoringSnsTopic
+      OKActions:
+      - !Ref MonitoringSnsTopic
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: '900'
+      EvaluationPeriods: '1'
+      Threshold: '80'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref  WebServerGroup
+  
+  WebServerMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DeletionPolicy: Retain
+    Properties:
+      AlarmDescription: !Sub "${WebServerGroup} has an instance with - High Memory Usage 80%"
+      AlarmActions:
+      - !Ref MonitoringSnsTopic
+      OKActions:
+      - !Ref MonitoringSnsTopic
+      MetricName: "mem_used_percent"
+      Namespace: CWAgent
+      Statistic: Average
+      Period: '900'
+      EvaluationPeriods: '1'
+      Threshold: '80'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref WebServerGroup
+  
+  WebServerDiskSpaceAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DeletionPolicy: Retain
+    Properties:
+      AlarmDescription: !Sub "${WebServerGroup} - over 90% of ${volume} volume space is in use"
+      AlarmActions:
+      - !Ref MonitoringSnsTopic
+      OKActions:
+      - !Ref MonitoringSnsTopic
+      MetricName: "disk_used_percent"
+      Namespace: CWAgent
+      Statistic: Average
+      Period: '300'
+      EvaluationPeriods: '1'
+      Threshold: '80'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref WebServerGroup
+      - Name: device
+        Value: !Ref volume
+      - Name: path
+        Value: !Ref path
+      - Name: fstype
+        Value: !Ref fstype
+
+# WORKER SERVER ALARMS
+  WorkerServerCPUAlarm: 
+    Type: AWS::CloudWatch::Alarm
+    DeletionPolicy: Retain
+    Properties:
+      AlarmDescription: !Sub "${WorkerServerAutoScalingGroup} has an instance with - High CPU Usage 80%"
+      AlarmActions:
+      - !Ref MonitoringSnsTopic
+      OKActions:
+      - !Ref MonitoringSnsTopic
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: '900'
+      EvaluationPeriods: '1'
+      Threshold: '80'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref  WorkerServerAutoScalingGroup
+  
+  WorkerServerMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DeletionPolicy: Retain
+    Properties:
+      AlarmDescription: !Sub "${WorkerServerAutoScalingGroup} has an instance with - High Memory Usage 80%"
+      AlarmActions:
+      - !Ref MonitoringSnsTopic
+      OKActions:
+      - !Ref MonitoringSnsTopic
+      MetricName: "mem_used_percent"
+      Namespace: CWAgent
+      Statistic: Average
+      Period: '900'
+      EvaluationPeriods: '1'
+      Threshold: '80'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref WorkerServerAutoScalingGroup
+  
+  WorkerServerDiskSpaceAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DeletionPolicy: Retain
+    Properties:
+      AlarmDescription: !Sub "${WorkerServerAutoScalingGroup} - over 90% of ${volume} volume space is in use"
+      AlarmActions:
+      - !Ref MonitoringSnsTopic
+      OKActions:
+      - !Ref MonitoringSnsTopic
+      MetricName: "disk_used_percent"
+      Namespace: CWAgent
+      Statistic: Average
+      Period: '300'
+      EvaluationPeriods: '1'
+      Threshold: '80'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref WorkerServerAutoScalingGroup
+      - Name: device
+        Value: !Ref volume
+      - Name: path
+        Value: !Ref path
+      - Name: fstype
+        Value: !Ref fstype
+
+# SFTP SERVER ALARMS
+  SftpServerCPUAlarm: 
+    Type: AWS::CloudWatch::Alarm
+    DeletionPolicy: Retain
+    Properties:
+      AlarmDescription: !Sub "${SftpServer} - High CPU Usage 80%"
+      AlarmActions:
+      - !Ref MonitoringSnsTopic
+      OKActions:
+      - !Ref MonitoringSnsTopic
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: '900'
+      EvaluationPeriods: '1'
+      Threshold: '80'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref  SftpServer
+  
+  SftpServerMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DeletionPolicy: Retain
+    Properties:
+      AlarmDescription: !Sub "${SftpServer} - High Memory Usage 80%"
+      AlarmActions:
+      - !Ref MonitoringSnsTopic
+      OKActions:
+      - !Ref MonitoringSnsTopic
+      MetricName: "mem_used_percent"
+      Namespace: CWAgent
+      Statistic: Average
+      Period: '900'
+      EvaluationPeriods: '1'
+      Threshold: '80'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref SftpServer
+  
+# RESHIFT CLUSTER ALARM MONITORING
+  DiskSpacealarmredshift:
+    Type: 'AWS::CloudWatch::Alarm'
+    DependsOn: RedshiftCluster
+    Properties:
+      MetricName: !Join 
+        - ''
+        - - !Ref RedshiftCluster
+          - High-PercentageDiskSpaceUsed
+      AlarmDescription: !Join 
+        - ''
+        - - DiskSpace Utilization > 80% for
+          - !Ref RedshiftCluster
+      Namespace: AWS/Redshift
+      Statistic: Average
+      Period: '300'
+      EvaluationPeriods: '3'
+      Threshold: '80'
+      AlarmActions:
+        - !Ref MonitoringSnsTopic
+      Dimensions:
+        - Name: ClusterIdentifier
+          Value: !Ref RedshiftCluster
+      ComparisonOperator: GreaterThanThreshold
+      Unit: Percent
+      
+  HighCPUutilizationalarmredshift:
+    Type: 'AWS::CloudWatch::Alarm'
+    DependsOn: RedshiftCluster
+    Properties:
+      MetricName: !Join 
+        - ''
+        - - !Ref RedshiftCluster
+          - High-CPUUtilization
+      AlarmDescription: !Join 
+        - ''
+        - - CPUUtilization > 80% for last 15 min for cluster
+          - !Ref RedshiftCluster
+      Namespace: AWS/Redshift
+      Statistic: Average
+      Period: '300'
+      EvaluationPeriods: '3'
+      Threshold: '80'
+      AlarmActions:
+        - !Ref MonitoringSnsTopic
+      Dimensions:
+        - Name: ClusterIdentifier
+          Value: !Ref RedshiftCluster
+      ComparisonOperator: GreaterThanThreshold
+      Unit: Percent
+  
+        
+  
+Outputs:
+
+# VPC RESOURCES OUTPUT
+  VPC:
+    Description: A reference to the created VPC
+    Value: !Ref VPC
+
+  PublicSubnets:
+    Description: A list of the public subnets
+    Value: !Join [ ",", [ !Ref PublicSubnet1, !Ref PublicSubnet2 ]]
+
+  PrivateSubnets:
+    Description: A list of the private subnets
+    Value: !Join [ ",", [ !Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet2 ]]
+
+  PublicSubnet1:
+    Description: A reference to the public subnet in the 1st Availability Zone
+    Value: !Ref PublicSubnet1
+
+  PublicSubnet2:
+    Description: A reference to the public subnet in the 2nd Availability Zone
+    Value: !Ref PublicSubnet2
+
+  PrivateSubnet1:
+    Description: A reference to the private subnet in the 1st Availability Zone
+    Value: !Ref PrivateSubnet1
+
+  PrivateSubnet2:
+    Description: A reference to the private subnet in the 2nd Availability Zone
+    Value: !Ref PrivateSubnet2
+
+  NoIngressSecurityGroup:
+    Description: Security group with no ingress rule
+    Value: !Ref NoIngressSecurityGroup
+
+  # WEBSERVER SERVER RESOURCES OUTPUT
+  WebServerLoadBalancerURL:
+    Description: Webserver URL of the website
+    Value: !Join
+      - ''
+      - - 'http://'
+        - !GetAtt
+          - ApplicationLoadBalancer
+          - DNSName
+  WebServerELBSecurityGroupId:
+    Description: The WebServer ELB Security Group ID
+    Value:
+      Ref: WebServerELBSecurityGroup
+  WebServerSecurityGroup:
+    Description: The WebServer Security Group ID
+    Value:
+      Ref: WebServerSecurityGroup 
+  WebServerAUtoScalingGroup:
+    Description: The WebServer AutoScalingGroup
+    Value:
+      Ref: WebServerSecurityGroup  
+  WebServerInstanceRole:
+    Description:  WebServer Instance profile ARN
+    Value:
+      Fn::GetAtt:
+      - WebServerInstanceRole
+      - Arn
+
+# WORKER SERVER RESOURCES OUTPUT 
+  WorkerServerAutoScalingGroup:
+    Description: The Worker servers AutoScalingGroup
+    Value:
+      Ref: WorkerServerAutoScalingGroup
+  awsRegionId:
+    Description: The AWS Region ID your template was launched in
+    Value:
+      Ref: AWS::Region
+  WorkerServerInstanceProfile:
+    Description: Instance profile ARN
+    Value:
+      Fn::GetAtt:
+      - WorkerServerInstanceProfile
+      - Arn
+  WorkerS3BucketId:
+    Description: The S3 bucket ID
+    Value:
+      Ref: WorkerS3Bucket
+
+# QUEUEING SYSTEM RESOURCE OUTPUT
+  SqsQueueArn:
+    Description: The SQS queue ARN
+    Value:
+      Fn::GetAtt:
+      - SqsQueue
+      - Arn
+
+# REDSHIFT DATABASE RESOURCE OUTPUT
+  ClusterEndpoint:
+    Description: Cluster endpoint
+    Value: !Sub "${RedshiftCluster.Endpoint.Address}:${RedshiftCluster.Endpoint.Port}"
+  ClusterName:
+    Description: Name of cluster
+    Value:
+      Ref: RedshiftCluster
+  ParameterGroupName:
+    Description: Name of parameter group
+    Value:
+      Ref: RedshiftClusterParameterGroup
+  RedshiftClusterSubnetGroupName:
+    Description: Name of cluster subnet group
+    Value:
+      Ref: RedshiftClusterSubnetGroup
+  RedshiftClusterSecurityGroupName:
+    Description: Name of cluster security group
+    Value:
+      Ref: RedshiftSecurityGroup
+  GlueCatalogDatabase:
+    Description:  AWS Glue Catalog Database Name
+    Value: 
+      Ref: GlueCatalogDB
+  RedshiftClusterIAMRole:
+    Description: IAM Role created and assigned to Redshift cluster
+    Condition: IsConfigureRedshiftIAMRole
+    Value: 
+      Fn::GetAtt: MyRedshiftIAMRole.Arn
+  RedshiftLoggingS3Bucket:
+    Description: Amazon S3 bucket created for audit logging
+    Condition: IsEnableLoggingToS3
+    Value: 
+      Ref: RedshiftLoggingS3Bucket
